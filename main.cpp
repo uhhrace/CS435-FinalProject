@@ -4,56 +4,82 @@
  */
 
 #include "mbed.h"
-// Library from https://os.mbed.com/teams/TVZ-Mechatronics-Team/wiki/Controlling-DC-motor
-#include "HBridgeDCMotor.h"
+#include <cstdio>
+#include <ratio>
 
-// Motor direction is either CW or CCW
-#define MOTOR_DIRECTION_CLOCKWISE true;
-#define MOTOR_DIRECTION_COUNTERCLOCKWISE false;
-#define MOTOR_DUTY_CYCLE_CLOCKWISE 0.5;
-#define MOTOR_DUTY_CYCLE_COUNTERCLOCKWISE -0.5;
+InterruptIn reverseButton(PC_13);
 
-const PinName MOTOR_A_GROUND_PIN(D6);
-const PinName MOTOR_B_GROUND_PIN(D7);
-const PinName MOTOR_A_POWER_PIN(D8);
-const PinName MOTOR_B_POWER_PIN(D9);
+bool motorDirection = true;
+bool slowDownFlag = false;
+bool speedUpFlag = false;
 
-DigitalIn reverseButton(BUTTON1);
+DigitalOut motorPos(PA_11);
+DigitalOut motorNeg(PA_12);
 
-HBridgeDCMotor motorA(MOTOR_A_GROUND_PIN, MOTOR_A_POWER_PIN);
-HBridgeDCMotor motorB(MOTOR_B_GROUND_PIN, MOTOR_B_POWER_PIN);
+PwmOut motorPWM(PC_9);
 
-bool motorDirection{MOTOR_DIRECTION_CLOCKWISE};
+Ticker t;
 
-/**
- * Set motor direction
- * @brief Sets direction for the motor based on a bool parameter
- * @param bool direction
- * @return void
- */
 void setMotorDirection(bool direction)
 {
-    if (motorDirection == MOTOR_DIRECTION_CLOCKWISE)
+    if (motorDirection)
     {
-        motorA.setDutyCycle(MOTOR_DUTY_CYCLE_CLOCKWISE);
-        motorB.setDutyCycle(MOTOR_DUTY_CYCLE_CLOCKWISE);
+        motorPos = 0;
+        motorNeg = 1;
     }
     else
     {
-        motorA.setDutyCycle(MOTOR_DUTY_CYCLE_COUNTERCLOCKWISE);
-        motorB.setDutyCycle(MOTOR_DUTY_CYCLE_COUNTERCLOCKWISE);
+        motorPos = 1;
+        motorNeg = 0;
     }
 }
 
-/**
- * Button interrupt
- * @brief Button interrupt to reverse motor direction
- * @return void
- */
+void speedUp()
+{
+    if (speedUpFlag)
+    {
+        int speed = 1;
+
+        while (speed < 1000)
+        {
+            motorPWM.pulsewidth_us(speed);
+            speed += 2;
+            printf("\nSpeeding up.");
+            wait_us(100);
+        }
+        speedUpFlag = false;
+    }
+}
+
+void slowDown()
+{
+    if (slowDownFlag)
+    {
+        int speed = 1000;
+
+        while (speed > 0.0000001)
+        {
+            motorPWM.pulsewidth_us(speed);
+            speed -= 2;
+            printf("\nSlowing down.");
+            wait_us(100);
+        }
+        slowDownFlag = false;
+        // We're at 0, change direction and speed up again
+        motorDirection = !motorDirection;
+        speedUpFlag = true;
+        // Stabilize, wait a second
+        thread_sleep_for(1500);
+    }
+}
+
 void buttonInterrupt()
 {
-    motorDirection = !motorDirection;
-    // setMotorDirection(newDirection);
+    if (!slowDownFlag && !speedUpFlag)
+    {
+        // Start slowing down to switch directions
+        slowDownFlag = true;
+    }
 }
 
 /**
@@ -64,15 +90,30 @@ void buttonInterrupt()
 int main()
 {
     // Wait for button interrupt to switch motor direction
-    reverseButton.rise(&buttonInterrupt);
+    reverseButton.rise(buttonInterrupt);
+    speedUpFlag = true;
 
-    // Sample time, switching frequency, ramp time, ramp time
-    motorA.configure(10e-3, 25e3, 3, 3);
-    motorB.configure(10e-3, 25e3, 3, 3);
+    motorPWM = 1;
+    motorPWM.period_us(1000);
 
     while (true)
     {
-        setMotorDirection(motorDirection);
-        thread_sleep_for(500);
+        if (slowDownFlag)
+        {
+            printf("Slowing down.");
+            slowDown();
+        }
+        else if (speedUpFlag)
+        {
+            printf("Speeding up.");
+            setMotorDirection(motorDirection);
+            speedUp();
+        }
+        else
+        {
+            printf("\nMoving at speed.");
+            setMotorDirection(motorDirection);
+            thread_sleep_for(500);
+        }
     }
 }
